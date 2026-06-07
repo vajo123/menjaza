@@ -1,10 +1,13 @@
 package client;
 
-import model.ExchangeInfo;
+import model.*;
+import util.StickerGenerator;
 
 import javax.swing.*;
 import java.awt.*;
-import java.util.HashMap;
+import java.io.*;
+import java.net.Socket;
+import java.util.*;
 
 public class ClientFrame extends JFrame {
 
@@ -19,10 +22,16 @@ public class ClientFrame extends JFrame {
     private JPanel missingPanel;
     private HashMap<Integer, JCheckBox> duplicateBoxes;
     private HashMap<Integer, JCheckBox> missingBoxes;
+    private UserData user;
+    private Socket socket;
+    private ObjectOutputStream out;
+    private ObjectInputStream in;
 
     public ClientFrame() {
         initializeGUI();
+        initializeConnection();
         initializeCheckBoxes();
+        startListening();
         setVisible(true);
     }
 
@@ -65,6 +74,19 @@ public class ClientFrame extends JFrame {
 
         duplicateBoxes = new HashMap<>();
         missingBoxes = new HashMap<>();
+
+        connectButton.addActionListener(e -> connectUser());
+        deleteButton.addActionListener(e -> deleteSelected());
+    }
+
+    private void initializeConnection() {
+        try {
+            socket = new Socket("localhost", 9000);
+            out = new ObjectOutputStream(socket.getOutputStream());
+            in = new ObjectInputStream(socket.getInputStream());
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Ne mogu da se povezem sa serverom. Proverite da li je server pokrenut.", "Greska", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void initializeCheckBoxes() {
@@ -75,6 +97,78 @@ public class ClientFrame extends JFrame {
             missingBoxes.put(i, miss);
             duplicatesPanel.add(dup);
             missingPanel.add(miss);
+        }
+    }
+
+    private void connectUser() {
+        if (user != null) {
+            JOptionPane.showMessageDialog(this, "Vec ste prijavljeni kao: " + user.getUsername());
+            return;
+        }
+        String username = usernameField.getText().trim();
+        if (username.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Unesite korisnicko ime.");
+            return;
+        }
+        if (out == null) {
+            JOptionPane.showMessageDialog(this, "Nema veze sa serverom.");
+            return;
+        }
+        try {
+            user = new UserData(username);
+            user.setDuplicates(StickerGenerator.generateDuplicates(15));
+            user.setMissing(StickerGenerator.generateMissing(user.getDuplicates(), 15));
+            refreshCheckBoxStates();
+            out.reset();
+            out.writeObject(user);
+            out.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void refreshCheckBoxStates() {
+        for (int i = 1; i <= 99; i++) {
+            boolean isDuplicate = user.getDuplicates().contains(i);
+            boolean isMissing   = user.getMissing().contains(i);
+
+            JCheckBox dupBox  = duplicateBoxes.get(i);
+            JCheckBox missBox = missingBoxes.get(i);
+
+            dupBox.setFont(dupBox.getFont().deriveFont(isDuplicate ? Font.BOLD : Font.PLAIN));
+            dupBox.setForeground(isDuplicate ? Color.BLUE : Color.LIGHT_GRAY);
+
+            missBox.setFont(missBox.getFont().deriveFont(isMissing ? Font.BOLD : Font.PLAIN));
+            missBox.setForeground(isMissing ? Color.BLUE : Color.LIGHT_GRAY);
+
+            dupBox.setSelected(false);
+            missBox.setSelected(false);
+        }
+    }
+
+    private void startListening() {
+        Thread thread = new Thread(() -> {});
+
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void deleteSelected() {
+        if (user == null) {
+            JOptionPane.showMessageDialog(this, "Niste prijavljeni.");
+            return;
+        }
+        for (int i = 1; i <= 99; i++) {
+            if (duplicateBoxes.get(i).isSelected()) user.getDuplicates().remove(i);
+            if (missingBoxes.get(i).isSelected())   user.getMissing().remove(i);
+        }
+        refreshCheckBoxStates();
+        try {
+            out.reset();
+            out.writeObject(user);
+            out.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
