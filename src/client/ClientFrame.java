@@ -8,6 +8,7 @@ import java.awt.*;
 import java.io.*;
 import java.net.Socket;
 import java.util.*;
+import java.util.List;
 
 public class ClientFrame extends JFrame {
 
@@ -77,6 +78,8 @@ public class ClientFrame extends JFrame {
 
         connectButton.addActionListener(e -> connectUser());
         deleteButton.addActionListener(e -> deleteSelected());
+        exchangesButton.addActionListener(e -> loadExchanges());
+        exchangeCombo.addActionListener(e -> showExchangeDetails());
     }
 
     private void initializeConnection() {
@@ -147,8 +150,24 @@ public class ClientFrame extends JFrame {
     }
 
     private void startListening() {
-        Thread thread = new Thread(() -> {});
-
+        Thread thread = new Thread(() -> {
+            try {
+                while (true) {
+                    Object obj = in.readObject();
+                    if (obj instanceof List<?>) {
+                        List<?> list = (List<?>) obj;
+                        if (!list.isEmpty() && list.get(0) instanceof ExchangeInfo) {
+                            SwingUtilities.invokeLater(() -> {
+                                exchangeCombo.removeAllItems();
+                                for (Object o : list) exchangeCombo.addItem((ExchangeInfo) o);
+                            });
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("Veza prekinuta.");
+            }
+        });
         thread.setDaemon(true);
         thread.start();
     }
@@ -170,5 +189,28 @@ public class ClientFrame extends JFrame {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private void loadExchanges() {
+        if (user == null) {
+            JOptionPane.showMessageDialog(this, "Niste prijavljeni.");
+            return;
+        }
+        try {
+            exchangeCombo.removeAllItems();
+            out.reset();
+            out.writeObject("GET_EXCHANGES");
+            out.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showExchangeDetails() {
+        ExchangeInfo info = (ExchangeInfo) exchangeCombo.getSelectedItem();
+        if (info == null) {
+            return;
+        }
+        detailsArea.setText("Mozes da menjas slicice sa korisnikom " + info.getOtherUser() + "\n\nTi imas za njega: " + info.getIGive() + "\n\nOn za tebe ima: " + info.getHeGives());
     }
 }
