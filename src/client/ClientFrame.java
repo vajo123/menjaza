@@ -13,17 +13,22 @@ import java.util.List;
 public class ClientFrame extends JFrame {
 
     private JTextField usernameField;
+
     private JButton connectButton;
     private JButton deleteButton;
     private JButton exchangesButton;
     private JButton sendRequestButton;
+
     private JComboBox<ExchangeInfo> exchangeCombo;
     private JTextArea detailsArea;
     private JPanel duplicatesPanel;
     private JPanel missingPanel;
+
     private HashMap<Integer, JCheckBox> duplicateBoxes;
     private HashMap<Integer, JCheckBox> missingBoxes;
+
     private UserData user;
+
     private Socket socket;
     private ObjectOutputStream out;
     private ObjectInputStream in;
@@ -43,8 +48,9 @@ public class ClientFrame extends JFrame {
         setLayout(new BorderLayout());
 
         JPanel top = new JPanel();
+
         usernameField = new JTextField(10);
-        connectButton = new JButton("Poveai");
+        connectButton = new JButton("Povezi");
         deleteButton = new JButton("Obrisi");
         exchangesButton = new JButton("Moguce razmene");
         sendRequestButton = new JButton("Posalji zahtev");
@@ -61,6 +67,7 @@ public class ClientFrame extends JFrame {
 
         duplicatesPanel = new JPanel(new GridLayout(11, 9));
         missingPanel = new JPanel(new GridLayout(11, 9));
+
         duplicatesPanel.setBorder(BorderFactory.createTitledBorder("Slicice koje imam"));
         missingPanel.setBorder(BorderFactory.createTitledBorder("Slicice koje mi trebaju"));
 
@@ -79,6 +86,7 @@ public class ClientFrame extends JFrame {
         connectButton.addActionListener(e -> connectUser());
         deleteButton.addActionListener(e -> deleteSelected());
         exchangesButton.addActionListener(e -> loadExchanges());
+        sendRequestButton.addActionListener(e -> sendExchangeRequest());
         exchangeCombo.addActionListener(e -> showExchangeDetails());
     }
 
@@ -108,23 +116,33 @@ public class ClientFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "Vec ste prijavljeni kao: " + user.getUsername());
             return;
         }
+
         String username = usernameField.getText().trim();
         if (username.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Unesite korisnicko ime.");
             return;
         }
+
         if (out == null) {
             JOptionPane.showMessageDialog(this, "Nema veze sa serverom.");
             return;
         }
+
         try {
             user = new UserData(username);
-            user.setDuplicates(StickerGenerator.generateDuplicates(15));
-            user.setMissing(StickerGenerator.generateMissing(user.getDuplicates(), 15));
+
+            Set<Integer> duplicates = StickerGenerator.generateDuplicates(15);
+            Set<Integer> missing = StickerGenerator.generateMissing(duplicates, 15);
+
+            user.setDuplicates(duplicates);
+            user.setMissing(missing);
+
             refreshCheckBoxStates();
+
             out.reset();
             out.writeObject(user);
             out.flush();
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -149,39 +167,23 @@ public class ClientFrame extends JFrame {
         }
     }
 
-    private void startListening() {
-        Thread thread = new Thread(() -> {
-            try {
-                while (true) {
-                    Object obj = in.readObject();
-                    if (obj instanceof List<?>) {
-                        List<?> list = (List<?>) obj;
-                        if (!list.isEmpty() && list.get(0) instanceof ExchangeInfo) {
-                            SwingUtilities.invokeLater(() -> {
-                                exchangeCombo.removeAllItems();
-                                for (Object o : list) exchangeCombo.addItem((ExchangeInfo) o);
-                            });
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("Veza prekinuta.");
-            }
-        });
-        thread.setDaemon(true);
-        thread.start();
-    }
-
     private void deleteSelected() {
         if (user == null) {
             JOptionPane.showMessageDialog(this, "Niste prijavljeni.");
             return;
         }
+
         for (int i = 1; i <= 99; i++) {
-            if (duplicateBoxes.get(i).isSelected()) user.getDuplicates().remove(i);
-            if (missingBoxes.get(i).isSelected())   user.getMissing().remove(i);
+            if (duplicateBoxes.get(i).isSelected()) {
+                user.getDuplicates().remove(i);
+            }
+            if (missingBoxes.get(i).isSelected()) {
+                user.getMissing().remove(i);
+            }
         }
+
         refreshCheckBoxStates();
+
         try {
             out.reset();
             out.writeObject(user);
@@ -196,6 +198,7 @@ public class ClientFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "Niste prijavljeni.");
             return;
         }
+
         try {
             exchangeCombo.removeAllItems();
             out.reset();
@@ -211,6 +214,159 @@ public class ClientFrame extends JFrame {
         if (info == null) {
             return;
         }
-        detailsArea.setText("Mozes da menjas slicice sa korisnikom " + info.getOtherUser() + "\n\nTi imas za njega: " + info.getIGive() + "\n\nOn za tebe ima: " + info.getHeGives());
+        detailsArea.setText(
+                "Mozes da menjas slicice sa korisnikom " + info.getOtherUser()
+                        + "\n\nTi imas za njega: " + info.getIGive()
+                        + "\n\nOn za tebe ima: " + info.getHeGives()
+        );
+    }
+
+    private void sendExchangeRequest() {
+        if (user == null) {
+            JOptionPane.showMessageDialog(this, "Niste prijavljeni.");
+            return;
+        }
+
+        try {
+            ExchangeInfo info = (ExchangeInfo) exchangeCombo.getSelectedItem();
+            if (info == null) {
+                JOptionPane.showMessageDialog(this, "Odaberite korisnika za razmenu.");
+                return;
+            }
+
+            List<Integer> mine = new ArrayList<>(info.getIGive());
+            List<Integer> his  = new ArrayList<>(info.getHeGives());
+
+            int count = Math.min(mine.size(), his.size());
+
+            List<Integer> selectedMine;
+            if (mine.size() > count) {
+                StickerSelectionDialog dialog = new StickerSelectionDialog(this, mine, count);
+                if (!dialog.isConfirmed()) {
+                    return;
+                }
+                selectedMine = dialog.getSelected();
+            } else {
+                selectedMine = new ArrayList<>(mine);
+            }
+
+            List<Integer> selectedHis = new ArrayList<>(his.subList(0, count));
+
+            ExchangeRequest request = new ExchangeRequest(
+                    user.getUsername(),
+                    info.getOtherUser(),
+                    selectedMine,
+                    selectedHis
+            );
+
+            out.reset();
+            out.writeObject(request);
+            out.flush();
+
+            JOptionPane.showMessageDialog(this, "Zahtev poslat korisniku " + info.getOtherUser() + ".");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void startListening() {
+        Thread thread = new Thread(() -> {
+            try {
+                while (true) {
+                    Object obj = in.readObject();
+
+                    if (obj instanceof List<?>) {
+                        List<?> list = (List<?>) obj;
+                        if (!list.isEmpty() && list.get(0) instanceof ExchangeInfo) {
+                            SwingUtilities.invokeLater(() -> {
+                                exchangeCombo.removeAllItems();
+                                for (Object o : list) {
+                                    exchangeCombo.addItem((ExchangeInfo) o);
+                                }
+                            });
+                        }
+                    }
+
+                    else if (obj instanceof ExchangeRequest) {
+                        ExchangeRequest req = (ExchangeRequest) obj;
+
+                        if (req.isAccepted()) {
+                            SwingUtilities.invokeLater(() -> {
+                                for (Integer num : req.getFromUserStickers()) {
+                                    user.getDuplicates().remove(num);
+                                }
+                                for (Integer num : req.getToUserStickers()) {
+                                    user.getMissing().remove(num);
+                                }
+                                refreshCheckBoxStates();
+
+                                try {
+                                    out.reset();
+                                    out.writeObject(user);
+                                    out.flush();
+                                } catch (Exception ex) {
+                                    ex.printStackTrace();
+                                }
+
+                                exchangeCombo.removeAllItems();
+                                detailsArea.setText("");
+                                JOptionPane.showMessageDialog(ClientFrame.this, "Razmena sa korisnikom " + req.getToUser() + " je prihvaćena i završena!");
+                            });
+
+                        } else {
+                            SwingUtilities.invokeLater(() -> {
+                                int answer = JOptionPane.showConfirmDialog(
+                                        this,
+                                        req.getFromUser() + " zeli razmenu.\n\n"
+                                                + "Daje ti: " + req.getFromUserStickers()
+                                                + "\n\nTrazi od tebe: " + req.getToUserStickers()
+                                                + "\n\nPrihvatas?",
+                                        "Zahtev za razmenu",
+                                        JOptionPane.YES_NO_OPTION
+                                );
+
+                                if (answer == JOptionPane.YES_OPTION) {
+                                    for (Integer num : req.getToUserStickers()) {
+                                        user.getDuplicates().remove(num);
+                                    }
+                                    for (Integer num : req.getFromUserStickers()) {
+                                        user.getMissing().remove(num);
+                                    }
+                                    refreshCheckBoxStates();
+
+                                    try {
+                                        out.reset();
+                                        out.writeObject(user);
+                                        out.flush();
+
+                                        ExchangeRequest acceptance = new ExchangeRequest(
+                                                req.getFromUser(),
+                                                req.getToUser(),
+                                                req.getFromUserStickers(),
+                                                req.getToUserStickers(),
+                                                true
+                                        );
+                                        out.reset();
+                                        out.writeObject(acceptance);
+                                        out.flush();
+                                    } catch (Exception ex) {
+                                        ex.printStackTrace();
+                                    }
+
+                                    exchangeCombo.removeAllItems();
+                                    detailsArea.setText("");
+                                    JOptionPane.showMessageDialog(ClientFrame.this, "Razmena uspesna!");
+                                }
+                            });
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("Veza prekinuta.");
+            }
+        });
+        thread.setDaemon(true);
+        thread.start();
     }
 }
